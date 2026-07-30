@@ -48,26 +48,13 @@
 
   header.top{
     text-align:center;
-    margin-bottom: 26px;
-  }
-  header.top .eyebrow{
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--ink-soft);
-    margin: 0 0 6px;
-  }
-  header.top h1{
-    font-family: 'Fredoka', sans-serif;
-    font-weight: 600;
-    font-size: 28px;
-    margin: 0 0 4px;
-    letter-spacing: -0.01em;
+    margin-bottom: 20px;
   }
   header.top .date{
-    font-size: 13px;
-    color: var(--ink-soft);
+    font-family: 'Fredoka', sans-serif;
+    font-weight: 600;
+    font-size: 19px;
+    color: var(--ink);
   }
 
   #catCards{
@@ -241,8 +228,6 @@
 
 <div class="wrap">
   <header class="top">
-    <p class="eyebrow">Household · shared checklist</p>
-    <h1>Pookie &amp; Lina</h1>
     <p class="date" id="todayLabel"></p>
   </header>
 
@@ -261,9 +246,11 @@
 
   const DAILY_TASKS = [
     { id: 'breakfast', label: 'Feed breakfast' },
+    { id: 'water-am', label: 'Change water' },
+    { id: 'litter-box', label: 'Clear litter box' },
     { id: 'lunch', label: 'Feed lunch' },
     { id: 'dinner', label: 'Feed dinner' },
-    { id: 'water', label: 'Change water' },
+    { id: 'water-pm', label: 'Change water' },
     { id: 'brush-fur', label: 'Brush fur' },
     { id: 'brush-teeth', label: 'Brush teeth' }
   ];
