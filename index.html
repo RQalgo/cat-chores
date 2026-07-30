@@ -369,12 +369,15 @@
     const totalCount = DAILY_TASKS.length;
     const fillPct = Math.round((doneCount / totalCount) * 100);
 
-    const overdueList = PERIODIC_TASKS.map(t => {
+    const periodicDisplay = PERIODIC_TASKS.map(t => {
       const st = state.periodic[t.id] || { periodKey: null, done: false, completedAt: null };
       const currentPeriod = periodKeyFor(t.freq);
       const isDue = st.periodKey !== currentPeriod || !st.done;
-      return { task: t, state: st, isDue };
-    }).filter(d => d.isDue);
+      const completedToday = !!st.completedAt && todayKey(new Date(st.completedAt)) === todayKey();
+      return { task: t, state: st, isDue, doneToday: completedToday && !isDue };
+    }).filter(d => d.isDue || d.doneToday);
+
+    const anyDue = periodicDisplay.some(d => d.isDue);
 
     const dailyRows = DAILY_TASKS.map(t => {
       const done = !!dailyTasks[t.id];
@@ -387,20 +390,22 @@
         </div>`;
     }).join('');
 
-    const periodicRows = overdueList.map(({task, state}) => {
+    const periodicRows = periodicDisplay.map(({task, state, isDue, doneToday}) => {
+      const rowClass = isDue ? 'overdue' : ('done ' + cat.accent);
+      const badge = isDue ? '<div class="badge">Due</div>' : '';
       return `
-        <div class="task-row overdue" data-kind="periodic" data-cat="${cat.id}" data-task="${task.id}" data-freq="${task.freq}">
+        <div class="task-row ${rowClass}" data-kind="periodic" data-cat="${cat.id}" data-task="${task.id}" data-freq="${task.freq}">
           <div class="check">${checkIcon()}</div>
           <div class="task-label-block">
             <div class="task-label">${task.label}</div>
             <div class="task-meta">${task.freq} · ${daysAgoLabel(state.completedAt)}</div>
           </div>
-          <div class="badge">Due</div>
+          ${badge}
         </div>`;
     }).join('');
 
-    const periodicSection = overdueList.length
-      ? `<p class="section-label">Also due</p><div class="task-list">${periodicRows}</div>`
+    const periodicSection = periodicDisplay.length
+      ? `<p class="section-label">Weekly &amp; monthly</p><div class="task-list">${periodicRows}</div>`
       : '';
 
     return `
@@ -417,7 +422,7 @@
         <p class="section-label">Daily</p>
         <div class="task-list">${dailyRows}</div>
         ${periodicSection}
-        ${(doneCount === totalCount && overdueList.length === 0) ? '<p class="all-caught-up">All caught up today.</p>' : ''}
+        ${(doneCount === totalCount && !anyDue) ? '<p class="all-caught-up">All caught up today.</p>' : ''}
       </div>
     `;
   }
