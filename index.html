@@ -325,53 +325,17 @@
     }
   }
 
-  async function setJSON(key, obj){
-    try{
-      await fetch(REST_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_KEY,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates,return=minimal'
-        },
-        body: JSON.stringify([{ key: key, value: obj, updated_at: new Date().toISOString() }])
-      });
-    } catch(e){
-      console.error('Supabase write failed', e);
-    }
-  }
-
-  async function getDailyState(catId){
-    const key = 'daily:' + catId + ':' + todayKey();
-    const data = await getJSON(key);
-    return data || {};
-  }
-
-  async function setDailyTaskDone(catId, taskId, done){
-    const key = 'daily:' + catId + ':' + todayKey();
-    const state = await getDailyState(catId);
-    state[taskId] = done;
-    await setJSON(key, state);
-  }
-
-  async function getPeriodicState(catId, taskId){
-    const key = 'periodic:' + catId + ':' + taskId;
-    const data = await getJSON(key);
-    return data || { periodKey: null, done: false, completedAt: null };
-  }
-
-  async function togglePeriodicTask(catId, taskId, freq, currentlyDue){
-    const key = 'periodic:' + catId + ':' + taskId;
-    if (currentlyDue){
-      await setJSON(key, {
-        periodKey: periodKeyFor(freq),
-        done: true,
-        completedAt: new Date().toISOString()
-      });
-    } else {
-      const state = await getPeriodicState(catId, taskId);
-      await setJSON(key, { periodKey: state.periodKey, done: false, completedAt: state.completedAt });
-    }
+  function setJSON(key, obj){
+    // Fire-and-forget: caller does not wait on this, so taps feel instant.
+    return fetch(REST_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify([{ key: key, value: obj, updated_at: new Date().toISOString() }])
+    }).catch(e => console.error('Supabase write failed', e));
   }
 
   function checkIcon(){
@@ -389,27 +353,44 @@
     return 'done ' + diffDays + ' days ago';
   }
 
-  async function renderCat(cat){
-    const dailyState = await getDailyState(cat.id);
-    const doneCount = DAILY_TASKS.filter(t => dailyState[t.id]).length;
+  // ---- In-memory cache: rendering reads only from here, never blocks on network ----
+  const CAT_STATE = {};
+  let suppressSyncUntil = 0;
+
+  function emptyCatState(){
+    return { daily: { date: todayKey(), tasks: {} }, periodic: {} };
+  }
+
+  async function fetchCatState(catId){
+    const val = await getJSON('cat:' + catId);
+    if (!val) return emptyCatState();
+    const state = {
+      daily: (val.daily && val.daily.date === todayKey()) ? val.daily : { date: todayKey(), tasks: {} },
+      periodic: val.periodic || {}
+    };
+    return state;
+  }
+
+  function persistCatState(catId){
+    setJSON('cat:' + catId, CAT_STATE[catId]);
+  }
+
+  function renderCat(cat){
+    const state = CAT_STATE[cat.id] || emptyCatState();
+    const dailyTasks = state.daily.tasks;
+    const doneCount = DAILY_TASKS.filter(t => dailyTasks[t.id]).length;
     const totalCount = DAILY_TASKS.length;
     const fillPct = Math.round((doneCount / totalCount) * 100);
 
-    const periodicStates = await Promise.all(
-      PERIODIC_TASKS.map(t => getPeriodicState(cat.id, t.id))
-    );
-
-    const dueTasks = [];
-    PERIODIC_TASKS.forEach((t, i) => {
-      const st = periodicStates[i];
+    const overdueList = PERIODIC_TASKS.map(t => {
+      const st = state.periodic[t.id] || { periodKey: null, done: false, completedAt: null };
       const currentPeriod = periodKeyFor(t.freq);
       const isDue = st.periodKey !== currentPeriod || !st.done;
-      dueTasks.push({ task: t, state: st, isDue });
-    });
-    const overdueList = dueTasks.filter(d => d.isDue);
+      return { task: t, state: st, isDue };
+    }).filter(d => d.isDue);
 
     const dailyRows = DAILY_TASKS.map(t => {
-      const done = !!dailyState[t.id];
+      const done = !!dailyTasks[t.id];
       return `
         <div class="task-row ${done ? 'done ' + cat.accent : ''}" data-kind="daily" data-cat="${cat.id}" data-task="${t.id}">
           <div class="check">${checkIcon()}</div>
@@ -454,45 +435,62 @@
     `;
   }
 
-  async function renderAll(){
+  function renderAll(){
     const container = document.getElementById('catCards');
-    const html = await Promise.all(CATS.map(renderCat));
-    container.innerHTML = html.join('');
+    container.innerHTML = CATS.map(renderCat).join('');
     attachHandlers();
+  }
+
+  async function syncFromServer(){
+    if (Date.now() < suppressSyncUntil) return;
+    const fresh = await Promise.all(CATS.map(c => fetchCatState(c.id)));
+    CATS.forEach((c, i) => { CAT_STATE[c.id] = fresh[i]; });
+    renderAll();
   }
 
   function attachHandlers(){
     document.querySelectorAll('.task-row').forEach(row => {
-      row.addEventListener('click', async () => {
+      row.addEventListener('click', () => {
         const kind = row.dataset.kind;
         const catId = row.dataset.cat;
         const taskId = row.dataset.task;
+        const state = CAT_STATE[catId];
 
         if (kind === 'daily'){
-          const dailyState = await getDailyState(catId);
-          const newDone = !dailyState[taskId];
-          await setDailyTaskDone(catId, taskId, newDone);
+          state.daily.tasks[taskId] = !state.daily.tasks[taskId];
         } else {
           const freq = row.dataset.freq;
-          const st = await getPeriodicState(catId, taskId);
           const currentPeriod = periodKeyFor(freq);
+          const st = state.periodic[taskId] || { periodKey: null, done: false, completedAt: null };
           const isDue = st.periodKey !== currentPeriod || !st.done;
-          await togglePeriodicTask(catId, taskId, freq, isDue);
+          state.periodic[taskId] = isDue
+            ? { periodKey: currentPeriod, done: true, completedAt: new Date().toISOString() }
+            : { periodKey: st.periodKey, done: false, completedAt: st.completedAt };
         }
+
+        // Update the screen immediately; persist quietly in the background.
         renderAll();
+        persistCatState(catId);
+        suppressSyncUntil = Date.now() + 3000;
       });
     });
   }
 
-  document.getElementById('todayLabel').textContent = friendlyDate();
-  renderAll();
+  async function init(){
+    document.getElementById('todayLabel').textContent = friendlyDate();
+    CATS.forEach(c => { CAT_STATE[c.id] = emptyCatState(); });
+    renderAll();
+    await syncFromServer();
+  }
+
+  init();
 
   // Keep views in sync across devices
-  setInterval(renderAll, 6000);
+  setInterval(syncFromServer, 6000);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) renderAll();
+    if (!document.hidden) syncFromServer();
   });
-  window.addEventListener('focus', renderAll);
+  window.addEventListener('focus', syncFromServer);
 
 })();
 </script>
