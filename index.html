@@ -543,8 +543,15 @@
     return d.getFullYear() + '-W' + pad(weekNo);
   }
 
-  function periodKeyFor(freq){
-    return freq === 'weekly' ? weekKey() : monthKey();
+  function daysSince(isoString){
+    if (!isoString) return Infinity;
+    const then = new Date(isoString);
+    return (Date.now() - then.getTime()) / 86400000;
+  }
+
+  function isDueTask(entry, freq){
+    const threshold = freq === 'weekly' ? 7 : 30;
+    return daysSince(entry ? entry.completedAt : null) >= threshold;
   }
 
   function friendlyDate(){
@@ -646,9 +653,8 @@
     const fillPct = Math.round((doneCount / totalCount) * 100);
 
     const periodicDisplay = PERIODIC_TASKS.map(t => {
-      const st = state.periodic[t.id] || { periodKey: null, done: false, completedAt: null };
-      const currentPeriod = periodKeyFor(t.freq);
-      const isDue = st.periodKey !== currentPeriod || !st.done;
+      const st = state.periodic[t.id] || { completedAt: null, previousCompletedAt: null };
+      const isDue = isDueTask(st, t.freq);
       const completedToday = !!st.completedAt && todayKey(new Date(st.completedAt)) === todayKey();
       return { task: t, state: st, isDue, doneToday: completedToday && !isDue };
     }).filter(d => d.isDue || d.doneToday);
@@ -728,15 +734,14 @@
           state.daily.tasks[taskId] = !state.daily.tasks[taskId];
         } else {
           const freq = row.dataset.freq;
-          const currentPeriod = periodKeyFor(freq);
-          const st = state.periodic[taskId] || { periodKey: null, done: false, completedAt: null };
-          const isDue = st.periodKey !== currentPeriod || !st.done;
+          const st = state.periodic[taskId] || { completedAt: null, previousCompletedAt: null };
+          const isDue = isDueTask(st, freq);
           if (isDue){
             const nowIso = new Date().toISOString();
-            state.periodic[taskId] = { periodKey: currentPeriod, done: true, completedAt: nowIso };
+            state.periodic[taskId] = { completedAt: nowIso, previousCompletedAt: st.completedAt };
             appendPeriodicLog(catId, { taskId: taskId, freq: freq, completedAt: nowIso });
           } else {
-            state.periodic[taskId] = { periodKey: st.periodKey, done: false, completedAt: st.completedAt };
+            state.periodic[taskId] = { completedAt: st.previousCompletedAt || null, previousCompletedAt: null };
           }
         }
 
